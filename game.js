@@ -1,529 +1,148 @@
-// ==========================================================================
-// BUNNY LOLLIPOP DASH (Safe Loader Version)
-// ==========================================================================
+// --- Game Initialization ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-(function(){
-
-// --- Minimal Audio Stub (Prevents errors since we don't have mp3s hosted) ---
-var audio = {
-    play: function() {},
-    startLoop: function() {},
-    stopLoop: function() {},
-    silence: function() {},
-    ghostReset: function() {},
-    credit: { play: function(){} },
-    coffeeBreakMusic: { startLoop: function(){} },
-    die: { play: function(){} },
-    ghostReturnToHome: { startLoop: function(){}, stopLoop: function(){} },
-    eatingGhost: { play: function(){} },
-    ghostTurnToBlue: { startLoop: function(){}, stopLoop: function(){} },
-    eatingFruit: { play: function(){} },
-    ghostNormalMove: { startLoop: function(){}, stopLoop: function(){} },
-    extend: { play: function(){} },
-    eating: { startLoop: function(){}, stopLoop: function(){} },
-    startMusic: { play: function(){} }
+// Game State
+const game = {
+    bunny: {
+        x: 300,
+        y: 300,
+        radius: 20,
+        speed: 5,
+        color: 'white'
+    },
+    lollipops: [],
+    score: 0,
+    totalLollipops: 10,
+    collectedCount: 0,
+    gameOver: false
 };
 
-// --- Game Constants & Globals ---
-var tileSize = 16; 
-var midTile = {x: tileSize/2, y: tileSize/2};
-var score = 0;
-var state; // PLAY, GAMEOVER, WIN
-var canvas, ctx;
-var map;
-var actors = [];
-var ghosts = [];
-var pacman;
-
-// Directions
-var DIR_UP = 0, DIR_LEFT = 1, DIR_DOWN = 2, DIR_RIGHT = 3;
-
-function setDirFromEnum(dir, dirEnum) {
-    if (dirEnum === DIR_UP)    { dir.x = 0; dir.y = -1; }
-    else if (dirEnum === DIR_RIGHT) { dir.x = 1; dir.y = 0; }
-    else if (dirEnum === DIR_DOWN)  { dir.x = 0; dir.y = 1; }
-    else if (dirEnum === DIR_LEFT)  { dir.x = -1; dir.y = 0; }
-}
-
-function rotateAboutFace(dirEnum) {
-    return (dirEnum + 2) % 4;
-}
-
-function getOpenTiles(tile, dirEnum) {
-    var openTiles = {};
-    openTiles[DIR_UP]    = map.isFloorTile(tile.x, tile.y - 1);
-    openTiles[DIR_RIGHT] = map.isFloorTile(tile.x + 1, tile.y);
-    openTiles[DIR_DOWN]  = map.isFloorTile(tile.x, tile.y + 1);
-    openTiles[DIR_LEFT]  = map.isFloorTile(tile.x - 1, tile.y);
-
-    var numOpen = 0;
-    for (var i=0; i<4; i++) if (openTiles[i]) numOpen++;
-    
-    if (dirEnum !== undefined && numOpen > 1) {
-        openTiles[rotateAboutFace(dirEnum)] = false; // Can't reverse immediately
-    }
-    return openTiles;
-}
-
-function getTurnClosestToTarget(tile, targetTile, openTiles) {
-    var minDist = Infinity;
-    var dirEnum = 0;
-    var dir = {};
-    for (var i = 0; i < 4; i++) {
-        if (openTiles[i]) {
-            setDirFromEnum(dir, i);
-            var dx = (tile.x + dir.x) - targetTile.x;
-            var dy = (tile.y + dir.y) - targetTile.y;
-            var dist = dx*dx + dy*dy;
-            if (dist < minDist) {
-                minDist = dist;
-                dirEnum = i;
-            }
-        }
-    }
-    return dirEnum;
-}
-
-// --- Map System ---
-var Map = function(numCols, numRows, tiles) {
-    this.numCols = numCols;
-    this.numRows = numRows;
-    this.tiles = tiles;
-    this.currentTiles = tiles.split("");
-    this.dotsEaten = 0;
-    
-    this.doorTile = {x: 13, y: 14}; 
-    this.parseDots();
+// Keyboard Tracking
+const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false
 };
 
-Map.prototype.parseDots = function() {
-    this.numDots = 0;
-    for (var i = 0; i < this.currentTiles.length; i++) {
-        if (this.currentTiles[i] === '.') this.numDots++;
-        if (this.currentTiles[i] === 'o') this.numDots++;
-    }
-};
+// Generate Random Lollipops
+function createLollipops() {
+    const colors = ['#FF69B4', '#FFD700', '#FF4500', '#00CED1', '#ADFF2F'];
+    const spawnMargin = 30;
 
-Map.prototype.getTile = function(x, y) {
-    if (x >= 0 && x < this.numCols && y >= 0 && y < this.numRows) {
-        return this.currentTiles[x + y * this.numCols];
-    }
-    return '|';
-};
-
-Map.prototype.isFloorTile = function(x, y) {
-    var t = this.getTile(x, y);
-    return t === ' ' || t === '.' || t === 'o';
-};
-
-Map.prototype.isTunnelTile = function(x, y) {
-    return (x < 1 || x >= this.numCols - 1);
-};
-
-Map.prototype.teleport = function(actor) {
-    if (actor.tile.x < 0) actor.pixel.x = (this.numCols - 1) * tileSize;
-    if (actor.tile.x >= this.numCols) actor.pixel.x = 0;
-};
-
-Map.prototype.onDotEat = function(x, y) {
-    this.dotsEaten++;
-    var i = x + y * this.numCols;
-    this.currentTiles[i] = ' ';
-};
-
-Map.prototype.allDotsEaten = function() {
-    return this.dotsEaten >= this.numDots;
-};
-
-// --- Actor Class ---
-var Actor = function() {
-    this.dir = {x:0, y:0};
-    this.pixel = {x:0, y:0};
-    this.tile = {x:0, y:0};
-    this.tilePixel = {x:0, y:0};
-    this.distToMid = {x:0, y:0};
-    this.speed = 1.5; 
-};
-
-Actor.prototype.reset = function() {
-    this.setPos(this.startPixel.x, this.startPixel.y);
-    this.setDir(this.startDirEnum);
-    this.speed = this.baseSpeed || 1.5;
-};
-
-Actor.prototype.setPos = function(px, py) {
-    this.pixel.x = px;
-    this.pixel.y = py;
-    if (map) map.teleport(this);
-    this.tile.x = Math.floor(this.pixel.x / tileSize);
-    this.tile.y = Math.floor(this.pixel.y / tileSize);
-    this.tilePixel.x = this.pixel.x % tileSize;
-    this.tilePixel.y = this.pixel.y % tileSize;
-    this.distToMid.x = midTile.x - this.tilePixel.x;
-    this.distToMid.y = midTile.y - this.tilePixel.y;
-};
-
-Actor.prototype.setDir = function(dirEnum) {
-    this.dirEnum = dirEnum;
-    setDirFromEnum(this.dir, dirEnum);
-};
-
-Actor.prototype.step = function() {
-    if (!map) return;
-    var moveAmt = this.speed;
-    if (map.isTunnelTile(this.tile.x, this.tile.y)) moveAmt *= 0.6;
-
-    var axis = (this.dir.x !== 0) ? 'x' : 'y';
-    var perp = (this.dir.x !== 0) ? 'y' : 'x';
-
-    var nextTileFloor = map.isFloorTile(this.tile.x + this.dir.x, this.tile.y + this.dir.y);
-    var pastMid = (this.dir.x === 1 && this.distToMid.x <= 0) || 
-                  (this.dir.x === -1 && this.distToMid.x >= 0) ||
-                  (this.dir.y === 1 && this.distToMid.y <= 0) || 
-                  (this.dir.y === -1 && this.distToMid.y >= 0);
-
-    if (pastMid && !nextTileFloor) {
-        this.pixel[axis] = this.tile[axis] * tileSize + midTile[axis]; 
-    } else {
-        this.pixel[axis] += this.dir[axis] * moveAmt;
-        if (this.distToMid[perp] !== 0) {
-            var correction = (this.distToMid[perp] > 0) ? 1 : -1;
-            if (Math.abs(this.distToMid[perp]) < moveAmt) correction = this.distToMid[perp];
-            this.pixel[perp] += correction;
-        }
-    }
-    this.setPos(this.pixel.x, this.pixel.y);
-};
-
-// --- Ghost Class ---
-var Ghost = function() {
-    Actor.call(this);
-    this.color = '#F00';
-    this.mode = 0; // 0: Chase, 2: Eaten
-    this.scared = false;
-};
-Ghost.prototype = newChildObject(Actor.prototype);
-
-Ghost.prototype.update = function() {
-    var isCenter = Math.abs(this.distToMid.x) < 2 && Math.abs(this.distToMid.y) < 2;
-    
-    if (isCenter) {
-        var openTiles = getOpenTiles(this.tile, this.dirEnum);
-        var target = (this.scared) ? {x:0, y:0} : (this.mode === 2 ? map.doorTile : pacman.tile);
-        
-        if (this.mode === 2 && this.tile.x === map.doorTile.x && this.tile.y === map.doorTile.y) {
-            this.mode = 0; 
-            this.scared = false;
-            this.speed = 1.4;
-        }
-
-        var nextDir = (this.scared) ? this.getRandomTurn(openTiles) : getTurnClosestToTarget(this.tile, target, openTiles);
-        this.setDir(nextDir);
-    }
-    this.step();
-};
-
-Ghost.prototype.getRandomTurn = function(openTiles) {
-    var choices = [];
-    for(var i=0; i<4; i++) if(openTiles[i]) choices.push(i);
-    return choices[Math.floor(Math.random() * choices.length)];
-};
-
-// --- Player (Bunny) Class ---
-var Player = function() {
-    Actor.call(this);
-    this.nextDirEnum = DIR_LEFT;
-    this.baseSpeed = 1.6;
-};
-Player.prototype = newChildObject(Actor.prototype);
-
-Player.prototype.update = function() {
-    var isCenter = Math.abs(this.distToMid.x) < 2 && Math.abs(this.distToMid.y) < 2;
-    if (isCenter || (this.dirEnum !== undefined && (this.dirEnum + 2)%4 === this.nextDirEnum)) {
-        var nextDirObj = {}; 
-        setDirFromEnum(nextDirObj, this.nextDirEnum);
-        if (map.isFloorTile(this.tile.x + nextDirObj.x, this.tile.y + nextDirObj.y)) {
-            this.setDir(this.nextDirEnum);
-        }
-    }
-    this.step();
-    
-    var t = map.getTile(this.tile.x, this.tile.y);
-    if (t === '.' || t === 'o') {
-        map.onDotEat(this.tile.x, this.tile.y);
-        score += (t === '.') ? 10 : 50;
-        if (t === 'o') makeGhostsScared();
-    }
-};
-
-function makeGhostsScared() {
-    for(var i=0; i<ghosts.length; i++) {
-        if(ghosts[i].mode !== 2) {
-            ghosts[i].scared = true;
-            ghosts[i].speed = 1.0; 
-            ghosts[i].setDir(rotateAboutFace(ghosts[i].dirEnum));
-        }
-    }
-    setTimeout(function(){
-        for(var i=0; i<ghosts.length; i++) {
-            ghosts[i].scared = false;
-            ghosts[i].speed = 1.4;
-        }
-    }, 8000);
-}
-
-// --- Drawing Functions ---
-function drawMap() {
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.fillStyle = "#5C2D91"; // Wall Color
-    var wallSize = tileSize + 1; 
-    for (var i = 0; i < map.currentTiles.length; i++) {
-        var x = (i % map.numCols) * tileSize;
-        var y = Math.floor(i / map.numCols) * tileSize;
-        if (map.currentTiles[i] === '|') {
-            ctx.fillRect(x, y, wallSize, wallSize);
-        } else if (map.currentTiles[i] === '.') {
-            ctx.fillStyle = "brown";
-            ctx.fillRect(x + tileSize/2 - 1, y + tileSize/2 + 2, 2, 6);
-            ctx.fillStyle = (i % 2 === 0) ? "#FF69B4" : "#00CED1"; 
-            ctx.beginPath();
-            ctx.arc(x + tileSize/2, y + tileSize/2, 3, 0, Math.PI*2);
-            ctx.fill();
-            ctx.fillStyle = "#5C2D91"; 
-        } else if (map.currentTiles[i] === 'o') {
-            ctx.fillStyle = "white";
-            ctx.beginPath();
-            ctx.arc(x + tileSize/2, y + tileSize/2, 7, 0, Math.PI*2);
-            ctx.fill();
-            ctx.fillStyle = "#5C2D91";
-        }
-    }
-}
-
-function drawActors() {
-    ctx.fillStyle = "white";
-    var px = pacman.pixel.x + tileSize/2;
-    var py = pacman.pixel.y + tileSize/2;
-    
-    // Bunny Body
-    ctx.beginPath();
-    ctx.arc(px, py, tileSize/2 - 2, 0, Math.PI*2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(px - 4, py - 8, 3, 8, 0, 0, Math.PI*2);
-    ctx.ellipse(px + 4, py - 8, 3, 8, 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.fillStyle = "black";
-    ctx.beginPath();
-    ctx.arc(px - 2, py - 1, 1, 0, Math.PI*2); 
-    ctx.arc(px + 2, py - 1, 1, 0, Math.PI*2); 
-    ctx.fill();
-
-    ghosts.forEach(function(g){
-        var gx = g.pixel.x + tileSize/2;
-        var gy = g.pixel.y + tileSize/2;
-        
-        if (g.mode === 2) { 
-            ctx.fillStyle = "white";
-            ctx.beginPath(); ctx.arc(gx-3, gy, 3, 0, Math.PI*2); ctx.fill();
-            ctx.beginPath(); ctx.arc(gx+3, gy, 3, 0, Math.PI*2); ctx.fill();
-            return;
-        }
-
-        ctx.fillStyle = g.scared ? "#00F" : g.color;
-        ctx.beginPath();
-        ctx.arc(gx, gy - 2, tileSize/2 - 2, Math.PI, 0);
-        ctx.lineTo(gx + tileSize/2 - 2, gy + tileSize/2);
-        ctx.lineTo(gx - tileSize/2 + 2, gy + tileSize/2);
-        ctx.fill();
-    });
-}
-
-function drawScore() {
-    ctx.font = "20px Arial";
-    ctx.fillStyle = "white";
-    ctx.fillText("Score: " + score, 10, canvas.height - 10);
-    
-    if(state === 'GAMEOVER') {
-        ctx.fillStyle = "rgba(0,0,0,0.7)";
-        ctx.fillRect(0, canvas.height/2 - 40, canvas.width, 80);
-        ctx.fillStyle = "red";
-        ctx.textAlign = "center";
-        ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2);
-        ctx.fillStyle = "white";
-        ctx.fillText("Click to Restart", canvas.width/2, canvas.height/2 + 30);
-        ctx.textAlign = "left";
-    } else if (state === 'WIN') {
-        ctx.fillStyle = "rgba(0,0,0,0.7)";
-        ctx.fillRect(0, canvas.height/2 - 40, canvas.width, 80);
-        ctx.fillStyle = "#0F0";
-        ctx.textAlign = "center";
-        ctx.fillText("YOU WIN!", canvas.width/2, canvas.height/2);
-        ctx.textAlign = "left";
-    }
-}
-
-// --- Initialization ---
-function init() {
-    canvas = document.getElementById('gameCanvas');
-    // Safety check: If canvas isn't found, stop here to avoid crash
-    if (!canvas) {
-        console.error("Canvas element not found! Make sure HTML loads before JS.");
-        return;
-    }
-    ctx = canvas.getContext('2d');
-    
-    var mapStr = 
-    "||||||||||||||||||||||||||||" +
-    "|............||............|" +
-    "|.||||.|||||.||.|||||.||||.|" +
-    "|o||||.|||||.||.|||||.||||o|" +
-    "|.||||.|||||.||.|||||.||||.|" +
-    "|..........................|" +
-    "|.||||.||.||||||||.||.||||.|" +
-    "|.||||.||.||||||||.||.||||.|" +
-    "|......||....||....||......|" +
-    "||||||.||||| || |||||.||||||" +
-    "     |.||||| || |||||.||    " +
-    "     |.||          ||.|     " +
-    "     |.|| |||--||| ||.|     " +
-    "||||||.|| |      | ||.||||||" +
-    "      .   |      |   .      " +
-    "||||||.|| |      | ||.||||||" +
-    "     |.|| |||||||| ||.|     " +
-    "     |.||          ||.|     " +
-    "     |.|| |||||||| ||.|     " +
-    "||||||.|| |||||||| ||.||||||" +
-    "|............||............|" +
-    "|.||||.|||||.||.|||||.||||.|" +
-    "|.||||.|||||.||.|||||.||||.|" +
-    "|o..||.......  .......||..o|" +
-    "|||.||.||.||||||||.||.||.|||" +
-    "|||.||.||.||||||||.||.||.|||" +
-    "|......||....||....||......|" +
-    "|.||||||||||.||.||||||||||.|" +
-    "|.||||||||||.||.||||||||||.|" +
-    "|..........................|" +
-    "||||||||||||||||||||||||||||";
-    
-    map = new Map(28, 31, mapStr);
-    canvas.width = 28 * tileSize;
-    canvas.height = 31 * tileSize;
-
-    pacman = new Player();
-    pacman.startPixel = {x: 13.5 * tileSize, y: 23 * tileSize};
-    pacman.startDirEnum = DIR_LEFT;
-    pacman.reset();
-
-    var ghostSpecs = [
-        {color: "red", x: 13.5, y: 11},
-        {color: "pink", x: 13.5, y: 14},
-        {color: "cyan", x: 11.5, y: 14},
-        {color: "orange", x: 15.5, y: 14}
-    ];
-    
-    ghosts = [];
-    ghostSpecs.forEach(function(s){
-        var g = new Ghost();
-        g.color = s.color;
-        g.startPixel = {x: s.x * tileSize, y: s.y * tileSize};
-        g.startDirEnum = DIR_UP;
-        g.reset();
-        ghosts.push(g);
-    });
-    
-    actors = [pacman].concat(ghosts);
-    state = 'PLAY';
-    
-    requestAnimationFrame(gameLoop);
-}
-
-function gameLoop() {
-    if (state === 'PLAY') {
-        pacman.update();
-        ghosts.forEach(function(g){ g.update(); });
-        
-        ghosts.forEach(function(g){
-            var dist = Math.abs(pacman.pixel.x - g.pixel.x) + Math.abs(pacman.pixel.y - g.pixel.y);
-            if (dist < tileSize/2) {
-                if (g.scared) {
-                    g.mode = 2; 
-                    g.scared = false;
-                    g.speed = 3; 
-                    score += 200;
-                } else if (g.mode === 0) {
-                    state = 'GAMEOVER';
-                }
-            }
+    for (let i = 0; i < game.totalLollipops; i++) {
+        game.lollipops.push({
+            x: Math.random() * (canvas.width - spawnMargin * 2) + spawnMargin,
+            y: Math.random() * (canvas.height - spawnMargin * 2) + spawnMargin,
+            collected: false,
+            color: colors[Math.floor(Math.random() * colors.length)]
         });
-        
-        if (map.allDotsEaten()) {
-            state = 'WIN';
-        }
     }
-
-    drawMap();
-    drawActors();
-    drawScore();
-    requestAnimationFrame(gameLoop);
 }
 
 // --- Input Listeners ---
-window.addEventListener('keydown', function(e) {
-    if([37,38,39,40].indexOf(e.keyCode) > -1) e.preventDefault();
-    if (e.keyCode === 37) pacman.nextDirEnum = DIR_LEFT;
-    if (e.keyCode === 38) pacman.nextDirEnum = DIR_UP;
-    if (e.keyCode === 39) pacman.nextDirEnum = DIR_RIGHT;
-    if (e.keyCode === 40) pacman.nextDirEnum = DIR_DOWN;
-});
-
-window.addEventListener('click', function(){
-    if(state === 'GAMEOVER' || state === 'WIN') {
-        map.currentTiles = map.tiles.split("");
-        map.dotsEaten = 0;
-        score = 0;
-        pacman.reset();
-        ghosts.forEach(function(g){g.reset();});
-        state = 'PLAY';
+window.addEventListener('keydown', (e) => {
+    if (keys.hasOwnProperty(e.key)) {
+        keys[e.key] = true;
+        e.preventDefault();
     }
 });
 
-// Mobile Touch
-var touchStartX = 0;
-var touchStartY = 0;
-window.addEventListener('touchstart', function(e) {
-    touchStartX = e.changedTouches[0].screenX;
-    touchStartY = e.changedTouches[0].screenY;
-}, false);
-
-window.addEventListener('touchend', function(e) {
-    var touchEndX = e.changedTouches[0].screenX;
-    var touchEndY = e.changedTouches[0].screenY;
-    var dx = touchEndX - touchStartX;
-    var dy = touchEndY - touchStartY;
-    
-    if (Math.abs(dx) > Math.abs(dy)) {
-        if (dx > 0) pacman.nextDirEnum = DIR_RIGHT;
-        else pacman.nextDirEnum = DIR_LEFT;
-    } else {
-        if (dy > 0) pacman.nextDirEnum = DIR_DOWN;
-        else pacman.nextDirEnum = DIR_UP;
+window.addEventListener('keyup', (e) => {
+    if (keys.hasOwnProperty(e.key)) {
+        keys[e.key] = false;
     }
-    if(state === 'GAMEOVER' || state === 'WIN') {
-        map.currentTiles = map.tiles.split("");
-        map.dotsEaten = 0;
-        score = 0;
-        pacman.reset();
-        ghosts.forEach(function(g){g.reset();});
-        state = 'PLAY';
+});
+
+// --- Game Logic ---
+function update() {
+    if (game.gameOver) return;
+
+    const b = game.bunny;
+
+    // Movement
+    if (keys.ArrowUp && b.y - b.radius > 0) b.y -= b.speed;
+    if (keys.ArrowDown && b.y + b.radius < canvas.height) b.y += b.speed;
+    if (keys.ArrowLeft && b.x - b.radius > 0) b.x -= b.speed;
+    if (keys.ArrowRight && b.x + b.radius < canvas.width) b.x += b.speed;
+
+    // Collisions
+    game.lollipops.forEach(pop => {
+        if (!pop.collected) {
+            const dx = b.x - pop.x;
+            const dy = b.y - pop.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < b.radius + 10) {
+                pop.collected = true;
+                game.score += 10;
+                game.collectedCount++;
+
+                updateScoreDisplay();
+
+                if (game.collectedCount === game.totalLollipops) {
+                    game.gameOver = true;
+                }
+            }
+        }
+    });
+}
+
+function updateScoreDisplay() {
+    const scoreEl = document.getElementById('scoreDisplay');
+    if (scoreEl) scoreEl.innerText = game.score;
+}
+
+// --- Drawing ---
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Lollipops
+    game.lollipops.forEach(pop => {
+        if (!pop.collected) {
+            ctx.fillStyle = '#8B4513'; // Stick
+            ctx.fillRect(pop.x - 1, pop.y + 5, 2, 12);
+
+            ctx.fillStyle = pop.color; // Candy
+            ctx.beginPath();
+            ctx.arc(pop.x, pop.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    });
+
+    // Draw Bunny
+    ctx.fillStyle = game.bunny.color;
+    ctx.beginPath();
+    ctx.arc(game.bunny.x, game.bunny.y, game.bunny.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText("🐰", game.bunny.x, game.bunny.y + 2);
+
+    // Win screen
+    if (game.gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#fff';
+        ctx.font = '40px Arial';
+        ctx.fillText("🎉 YUMMY! YOU WIN! 🎉", canvas.width / 2, canvas.height / 2);
+
+        ctx.font = '20px Arial';
+        ctx.fillText("Refresh to play again", canvas.width / 2, canvas.height / 2 + 40);
     }
-}, false);
+}
 
-// --- CRITICAL FIX: Wait for window load before starting ---
-window.onload = function() {
-    init();
-};
+// --- Main Loop ---
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
 
-})();
+// Start Game
+createLollipops();
+loop();
