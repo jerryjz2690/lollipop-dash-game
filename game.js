@@ -1,445 +1,490 @@
-// --- Sparko Sweets Bunny Game ---
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sparko Sweets Pac Vibes</title>
+  <style>
+    :root {
+      --sparko-navy: #04152d;
+      --sparko-pink: #ff5fa8;
+      --sparko-bg: #050811;
+      --sparko-ghost1: #ffb8de;
+      --sparko-ghost2: #66e6ff;
+      --sparko-ghost3: #ffe066;
+      --sparko-ghost4: #b37dff;
+    }
 
-// Game Configuration
-const CONFIG = {
-    bunnySpeed: 4,
-    bunnyRadius: 22,
-    lollipopRadius: 12,
-    totalLollipops: 15,
-    pointsPerLollipop: 10,
-    stardustParticles: 20
-};
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(circle at top, #141b3f, var(--sparko-bg));
+      color: white;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-// Game State
-const game = {
-    bunny: { 
-        x: canvas.width / 2, 
-        y: canvas.height / 2, 
-        radius: CONFIG.bunnyRadius, 
-        speed: CONFIG.bunnySpeed,
-        direction: { x: 0, y: 0 },
-        mouthOpen: false,
-        animationTimer: 0
+    #wrapper {
+      text-align: center;
+    }
+
+    #gameCanvas {
+      background: #000;
+      border-radius: 18px;
+      box-shadow:
+        0 0 0 4px rgba(255, 255, 255, 0.05),
+        0 18px 45px rgba(0, 0, 0, 0.6);
+      image-rendering: pixelated;
+    }
+
+    #hud {
+      margin-top: 12px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+
+    #score {
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    #status {
+      font-size: 13px;
+      opacity: 0.85;
+    }
+
+    .pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    #brand {
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    a {
+      color: var(--sparko-pink);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+<div id="wrapper">
+  <canvas id="gameCanvas" width="456" height="504"></canvas>
+  <div id="hud">
+    <div id="brand" class="pill">Sparko Sweets Arcade</div>
+    <div id="score" class="pill">Score: 0</div>
+    <div id="status">Use arrow keys to move the lollipop hero</div>
+  </div>
+</div>
+
+<script>
+  // Basic Pac vibe grid using Sparko Sweets colors.
+  // This is intentionally minimal so you can tweak it easily.
+
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+
+  const TILE_SIZE = 24;
+  const COLS = 19;
+  const ROWS = 21;
+
+  // Simple maze, # = wall, . = lollipop pellet, o = big lollipop, ' ' = empty
+  const MAP_TEMPLATE = [
+    "###################",
+    "#........#........#",
+    "#.###.###.#.###.###",
+    "#o###.###.#.###.##o",
+    "#.................#",
+    "#.###.#.#####.#.###",
+    "#.....#...#...#...#",
+    "#####.### # ###.###",
+    "    #.#       #.#  ",
+    "#####.# ## ## #.###",
+    "     .  #   #  .   ",
+    "#####.# ##### #.###",
+    "    #.#       #.#  ",
+    "#####.# ##### #.###",
+    "#........#........#",
+    "#.###.###.#.###.###",
+    "#o..#.....L.....#o#",
+    "###.#.#.#####.#.###",
+    "#.....#...#...#...#",
+    "#.#######.#.#######",
+    "###################"
+  ];
+
+  // Convert template to mutable 2D array
+  let map = MAP_TEMPLATE.map(row => row.split(""));
+
+  const player = {
+    col: 9,
+    row: 16,
+    dirCol: 0,
+    dirRow: 0,
+    pendingDirCol: 0,
+    pendingDirRow: 0,
+    color: getComputedStyle(document.documentElement).getPropertyValue("--sparko-pink").trim()
+  };
+
+  const ghosts = [
+    {
+      col: 8, row: 10,
+      dirCol: 1, dirRow: 0,
+      color: getComputedStyle(document.documentElement).getPropertyValue("--sparko-ghost1").trim()
     },
-    lollipops: [],
-    particles: [],
-    score: 0,
-    totalLollipops: CONFIG.totalLollipops,
-    gameOver: false,
-    startTime: Date.now()
-};
+    {
+      col: 9, row: 10,
+      dirCol: -1, dirRow: 0,
+      color: getComputedStyle(document.documentElement).getPropertyValue("--sparko-ghost2").trim()
+    },
+    {
+      col: 10, row: 10,
+      dirCol: 0, dirRow: 1,
+      color: getComputedStyle(document.documentElement).getPropertyValue("--sparko-ghost3").trim()
+    },
+    {
+      col: 9, row: 9,
+      dirCol: 0, dirRow: -1,
+      color: getComputedStyle(document.documentElement).getPropertyValue("--sparko-ghost4").trim()
+    }
+  ];
 
-// Keyboard Input
-const keys = {
-    ArrowUp: false,
-    ArrowDown: false,
-    ArrowLeft: false,
-    ArrowRight: false,
-    w: false,
-    a: false,
-    s: false,
-    d: false
-};
+  let score = 0;
+  let gameOver = false;
+  let win = false;
 
-// Sparko Sweets Brand Colors for Lollipops
-const LOLLIPOP_COLORS = [
-    { candy: '#FF1493', shine: '#FF69B4', name: 'Pink' },      // Hot Pink
-    { candy: '#FFD700', shine: '#FFEC8B', name: 'Gold' },      // Gold
-    { candy: '#FF4500', shine: '#FF6347', name: 'Orange' },    // Orange Red
-    { candy: '#9370DB', shine: '#BA55D3', name: 'Purple' },    // Purple
-    { candy: '#00CED1', shine: '#48D1CC', name: 'Teal' },      // Turquoise
-    { candy: '#32CD32', shine: '#90EE90', name: 'Green' },     // Lime Green
-    { candy: '#FF69B4', shine: '#FFB6C1', name: 'Rose' }       // Pink variants
-];
+  const scoreEl = document.getElementById("score");
+  const statusEl = document.getElementById("status");
 
-// Particle System for Collection Effects
-class Particle {
-    constructor(x, y, color) {
-        this.x = x;
-        this.y = y;
-        this.vx = (Math.random() - 0.5) * 6;
-        this.vy = (Math.random() - 0.5) * 6 - 2;
-        this.life = 1;
-        this.decay = 0.02;
-        this.size = Math.random() * 4 + 2;
-        this.color = color;
+  function isWall(c, r) {
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+    return map[r][c] === "#";
+  }
+
+  function pelletCountLeft() {
+    let count = 0;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (map[r][c] === "." || map[r][c] === "o") count++;
+      }
+    }
+    return count;
+  }
+
+  function resetGame() {
+    map = MAP_TEMPLATE.map(row => row.split(""));
+    player.col = 9;
+    player.row = 16;
+    player.dirCol = 0;
+    player.dirRow = 0;
+    player.pendingDirCol = 0;
+    player.pendingDirRow = 0;
+    ghosts[0].col = 8; ghosts[0].row = 10; ghosts[0].dirCol = 1; ghosts[0].dirRow = 0;
+    ghosts[1].col = 9; ghosts[1].row = 10; ghosts[1].dirCol = -1; ghosts[1].dirRow = 0;
+    ghosts[2].col = 10; ghosts[2].row = 10; ghosts[2].dirCol = 0; ghosts[2].dirRow = 1;
+    ghosts[3].col = 9; ghosts[3].row = 9; ghosts[3].dirCol = 0; ghosts[3].dirRow = -1;
+    score = 0;
+    gameOver = false;
+    win = false;
+    statusEl.textContent = "Use arrow keys to move the lollipop hero";
+    updateScore();
+  }
+
+  function updateScore() {
+    scoreEl.textContent = "Score: " + score;
+  }
+
+  window.addEventListener("keydown", e => {
+    if (gameOver || win) {
+      if (e.key === " " || e.key === "Enter") {
+        resetGame();
+      }
+      return;
+    }
+    let dCol = 0, dRow = 0;
+    if (e.key === "ArrowLeft" || e.key === "a") dCol = -1;
+    if (e.key === "ArrowRight" || e.key === "d") dCol = 1;
+    if (e.key === "ArrowUp" || e.key === "w") dRow = -1;
+    if (e.key === "ArrowDown" || e.key === "s") dRow = 1;
+
+    if (dCol !== 0 || dRow !== 0) {
+      player.pendingDirCol = dCol;
+      player.pendingDirRow = dRow;
+    }
+  });
+
+  function movePlayer() {
+    // Try to turn into pending direction if tile is open
+    const nextCol = player.col + player.pendingDirCol;
+    const nextRow = player.row + player.pendingDirRow;
+    if (!isWall(nextCol, nextRow)) {
+      player.dirCol = player.pendingDirCol;
+      player.dirRow = player.pendingDirRow;
     }
 
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.vy += 0.2; // gravity
-        this.life -= this.decay;
+    const targetCol = player.col + player.dirCol;
+    const targetRow = player.row + player.dirRow;
+    if (!isWall(targetCol, targetRow)) {
+      player.col = wrapCol(targetCol);
+      player.row = targetRow;
+      eatPelletAt(player.col, player.row);
+    }
+  }
+
+  function eatPelletAt(c, r) {
+    const tile = map[r][c];
+    if (tile === ".") {
+      map[r][c] = " ";
+      score += 10;
+      updateScore();
+    } else if (tile === "o") {
+      map[r][c] = " ";
+      score += 50;
+      updateScore();
+      // Very light "powered" effect: slow ghosts for a few steps
+      ghosts.forEach(g => g.slowTimer = 15);
     }
 
-    draw() {
-        ctx.globalAlpha = this.life;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
+    if (pelletCountLeft() === 0) {
+      win = true;
+      statusEl.textContent = "You cleared all the Sparko pops. Press Space to play again";
     }
+  }
 
-    isDead() {
-        return this.life <= 0;
-    }
-}
+  function wrapCol(c) {
+    if (c < 0) return COLS - 1;
+    if (c >= COLS) return 0;
+    return c;
+  }
 
-// Generate Lollipops with spacing
-function createLollipops() {
-    const minDistance = 80; // Minimum distance between lollipops
-    const margin = 50;
-    
-    for (let i = 0; i < game.totalLollipops; i++) {
-        let validPosition = false;
-        let attempts = 0;
-        let newLollipop;
-        
-        while (!validPosition && attempts < 100) {
-            newLollipop = {
-                x: Math.random() * (canvas.width - margin * 2) + margin,
-                y: Math.random() * (canvas.height - margin * 2) + margin,
-                collected: false,
-                colorScheme: LOLLIPOP_COLORS[i % LOLLIPOP_COLORS.length],
-                rotation: Math.random() * Math.PI * 2,
-                bobOffset: Math.random() * Math.PI * 2,
-                scale: 1
-            };
-            
-            // Check distance from bunny starting position
-            const distFromBunny = Math.hypot(newLollipop.x - game.bunny.x, newLollipop.y - game.bunny.y);
-            
-            // Check distance from other lollipops
-            validPosition = distFromBunny > 100 && game.lollipops.every(pop => {
-                const dist = Math.hypot(newLollipop.x - pop.x, newLollipop.y - pop.y);
-                return dist > minDistance;
-            });
-            
-            attempts++;
+  function moveGhosts() {
+    for (const g of ghosts) {
+      const speedSkip = g.slowTimer && g.slowTimer > 0 ? 2 : 1;
+      if (!g._stepMod) g._stepMod = 0;
+      g._stepMod = (g._stepMod + 1) % speedSkip;
+      if (g._stepMod !== 0) {
+        if (g.slowTimer && g.slowTimer > 0) g.slowTimer--;
+        continue;
+      }
+
+      const options = [];
+      const dirs = [
+        { c: 1, r: 0 },
+        { c: -1, r: 0 },
+        { c: 0, r: 1 },
+        { c: 0, r: -1 }
+      ];
+      for (const d of dirs) {
+        const nc = wrapCol(g.col + d.c);
+        const nr = g.row + d.r;
+        // avoid walls and reverse moves to keep them wandering nicely
+        const isOpposite = d.c === -g.dirCol && d.r === -g.dirRow;
+        if (!isWall(nc, nr) && !isOpposite) {
+          options.push(d);
         }
-        
-        if (validPosition) {
-            game.lollipops.push(newLollipop);
+      }
+      if (options.length === 0) {
+        // only option is to reverse
+        g.dirCol = -g.dirCol;
+        g.dirRow = -g.dirRow;
+      } else {
+        const d = options[Math.floor(Math.random() * options.length)];
+        g.dirCol = d.c;
+        g.dirRow = d.r;
+      }
+
+      g.col = wrapCol(g.col + g.dirCol);
+      g.row = g.row + g.dirRow;
+    }
+  }
+
+  function checkCollisions() {
+    for (const g of ghosts) {
+      if (g.col === player.col && g.row === player.row) {
+        if (g.slowTimer && g.slowTimer > 0) {
+          // Player "eats" slowed ghosts
+          g.col = 9;
+          g.row = 10;
+          g.dirCol = 0;
+          g.dirRow = 0;
+          g.slowTimer = 0;
+          score += 100;
+          updateScore();
+        } else {
+          gameOver = true;
+          statusEl.textContent = "The candy ghosts got you. Press Space to play again";
         }
+      }
     }
-}
+  }
 
-// Input Listeners
-window.addEventListener('keydown', (e) => {
-    const key = e.key.toLowerCase();
-    if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
-    if (keys.hasOwnProperty(key)) keys[key] = true;
-    
-    if(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].indexOf(e.key) > -1) {
-        e.preventDefault();
-    }
-});
-
-window.addEventListener('keyup', (e) => {
-    const key = e.key.toLowerCase();
-    if (keys.hasOwnProperty(e.code)) keys[e.code] = false;
-    if (keys.hasOwnProperty(key)) keys[key] = false;
-});
-
-// Game Logic
-function update() {
-    if (game.gameOver) return;
-
-    // Calculate movement direction
-    let dx = 0, dy = 0;
-    
-    if (keys.ArrowUp || keys.w) dy -= 1;
-    if (keys.ArrowDown || keys.s) dy += 1;
-    if (keys.ArrowLeft || keys.a) dx -= 1;
-    if (keys.ArrowRight || keys.d) dx += 1;
-
-    // Normalize diagonal movement
-    if (dx !== 0 && dy !== 0) {
-        dx *= 0.707;
-        dy *= 0.707;
-    }
-
-    // Update bunny direction for animation
-    if (dx !== 0 || dy !== 0) {
-        game.bunny.direction.x = dx;
-        game.bunny.direction.y = dy;
-        game.bunny.animationTimer += 0.15;
-        game.bunny.mouthOpen = Math.sin(game.bunny.animationTimer) > 0;
-    }
-
-    // Move bunny with boundary checking
-    const newX = game.bunny.x + dx * game.bunny.speed;
-    const newY = game.bunny.y + dy * game.bunny.speed;
-    
-    if (newX > game.bunny.radius && newX < canvas.width - game.bunny.radius) {
-        game.bunny.x = newX;
-    }
-    if (newY > game.bunny.radius && newY < canvas.height - game.bunny.radius) {
-        game.bunny.y = newY;
-    }
-
-    // Check lollipop collection
-    game.lollipops.forEach(pop => {
-        if (!pop.collected) {
-            const distance = Math.hypot(game.bunny.x - pop.x, game.bunny.y - pop.y);
-            
-            if (distance < game.bunny.radius + CONFIG.lollipopRadius) {
-                pop.collected = true;
-                pop.scale = 0;
-                game.score += CONFIG.pointsPerLollipop;
-                
-                // Create particle burst
-                for (let i = 0; i < CONFIG.stardustParticles; i++) {
-                    game.particles.push(new Particle(pop.x, pop.y, pop.colorScheme.shine));
-                }
-                
-                updateScoreDisplay();
-                checkWinCondition();
-            }
-        }
-    });
-
-    // Update particles
-    game.particles = game.particles.filter(p => {
-        p.update();
-        return !p.isDead();
-    });
-
-    // Animate uncollected lollipops
-    game.lollipops.forEach(pop => {
-        if (!pop.collected) {
-            pop.bobOffset += 0.05;
-        }
-    });
-}
-
-function updateScoreDisplay() {
-    const scoreEl = document.getElementById('scoreDisplay');
-    if (scoreEl) scoreEl.innerText = game.score;
-}
-
-function checkWinCondition() {
-    const remaining = game.lollipops.filter(p => !p.collected).length;
-    if (remaining === 0) {
-        game.gameOver = true;
-        const elapsed = Math.floor((Date.now() - game.startTime) / 1000);
-        console.log(`Game completed in ${elapsed} seconds!`);
-    }
-}
-
-// Drawing Functions
-function drawLollipop(pop) {
-    if (pop.collected && pop.scale <= 0) return;
-    
-    const bobAmount = Math.sin(pop.bobOffset) * 3;
-    const displayY = pop.y + bobAmount;
-    
-    ctx.save();
-    ctx.translate(pop.x, displayY);
-    ctx.scale(pop.scale, pop.scale);
-    
-    // Stick
-    ctx.strokeStyle = '#8B4513';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(0, CONFIG.lollipopRadius);
-    ctx.lineTo(0, CONFIG.lollipopRadius + 18);
-    ctx.stroke();
-    
-    // Spiral candy design
-    ctx.rotate(pop.rotation);
-    
-    // Main candy circle
-    ctx.fillStyle = pop.colorScheme.candy;
-    ctx.beginPath();
-    ctx.arc(0, 0, CONFIG.lollipopRadius, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Spiral swirl
-    ctx.strokeStyle = pop.colorScheme.shine;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let a = 0; a < Math.PI * 4; a += 0.1) {
-        const r = (CONFIG.lollipopRadius - 2) * (a / (Math.PI * 4));
-        const x = Math.cos(a) * r;
-        const y = Math.sin(a) * r;
-        if (a === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    
-    // Shine effect
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.beginPath();
-    ctx.arc(-CONFIG.lollipopRadius * 0.3, -CONFIG.lollipopRadius * 0.3, CONFIG.lollipopRadius * 0.3, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.restore();
-}
-
-function drawBunny() {
-    const bunny = game.bunny;
-    
-    ctx.save();
-    ctx.translate(bunny.x, bunny.y);
-    
-    // Determine facing direction
-    if (bunny.direction.x < 0) ctx.scale(-1, 1);
-    
-    // Body (white circle)
-    ctx.fillStyle = 'white';
-    ctx.beginPath();
-    ctx.arc(0, 0, bunny.radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#ddd';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    
-    // Ears
-    ctx.fillStyle = 'white';
-    ctx.strokeStyle = '#ddd';
-    ctx.lineWidth = 2;
-    
-    // Left ear
-    ctx.beginPath();
-    ctx.ellipse(-8, -bunny.radius, 6, 14, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    
-    // Right ear
-    ctx.beginPath();
-    ctx.ellipse(8, -bunny.radius, 6, 14, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    
-    // Inner ears (pink)
-    ctx.fillStyle = '#FFB6C1';
-    ctx.beginPath();
-    ctx.ellipse(-8, -bunny.radius, 3, 8, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(8, -bunny.radius, 3, 8, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Eyes
-    ctx.fillStyle = '#333';
-    ctx.beginPath();
-    ctx.arc(-8, -4, 3, 0, Math.PI * 2);
-    ctx.arc(8, -4, 3, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Eye shine
-    ctx.fillStyle = 'white';
-    ctx.beginPath();
-    ctx.arc(-7, -5, 1.5, 0, Math.PI * 2);
-    ctx.arc(9, -5, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Nose
-    ctx.fillStyle = '#FF69B4';
-    ctx.beginPath();
-    ctx.arc(0, 2, 3, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Mouth (animated)
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1.5;
-    ctx.lineCap = 'round';
-    
-    if (bunny.mouthOpen) {
-        // Open mouth
-        ctx.beginPath();
-        ctx.arc(0, 6, 4, 0.2, Math.PI - 0.2);
-        ctx.stroke();
-    } else {
-        // Closed mouth
-        ctx.beginPath();
-        ctx.moveTo(-3, 6);
-        ctx.lineTo(0, 8);
-        ctx.lineTo(3, 6);
-        ctx.stroke();
-    }
-    
-    // Whiskers
-    ctx.strokeStyle = '#666';
-    ctx.lineWidth = 1;
-    
-    // Left whiskers
-    ctx.beginPath();
-    ctx.moveTo(-10, 0);
-    ctx.lineTo(-20, -2);
-    ctx.moveTo(-10, 2);
-    ctx.lineTo(-20, 4);
-    ctx.stroke();
-    
-    // Right whiskers
-    ctx.beginPath();
-    ctx.moveTo(10, 0);
-    ctx.lineTo(20, -2);
-    ctx.moveTo(10, 2);
-    ctx.lineTo(20, 4);
-    ctx.stroke();
-    
-    ctx.restore();
-}
-
-function draw() {
-    // Gradient background
-    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, '#FFF8DC');
-    gradient.addColorStop(1, '#FFE4E1');
-    ctx.fillStyle = gradient;
+  function draw() {
+    // Clear
+    ctx.fillStyle = "#01010a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw particles
-    game.particles.forEach(p => p.draw());
-    
-    // Draw lollipops
-    game.lollipops.forEach(pop => drawLollipop(pop));
-    
-    // Draw bunny
-    drawBunny();
-    
-    // Win screen
-    if (game.gameOver) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Title
-        ctx.fillStyle = '#FF1493';
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('🎉 SWEET VICTORY! 🎉', canvas.width / 2, canvas.height / 2 - 40);
-        
-        // Score
-        ctx.fillStyle = '#333';
-        ctx.font = '28px Arial';
-        ctx.fillText(`Score: ${game.score}`, canvas.width / 2, canvas.height / 2 + 10);
-        
-        // Instructions
-        ctx.font = '20px Arial';
-        ctx.fillStyle = '#666';
-        ctx.fillText('Refresh to play again', canvas.width / 2, canvas.height / 2 + 50);
-        
-        // Sparko Sweets branding
-        ctx.font = 'italic 16px Arial';
-        ctx.fillStyle = '#999';
-        ctx.fillText('Sparko Sweets - Handcrafted Happiness', canvas.width / 2, canvas.height / 2 + 90);
-    }
-}
 
-// Main Loop
-function loop() {
-    update();
+    // Draw walls and pellets
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const x = c * TILE_SIZE;
+        const y = r * TILE_SIZE;
+        const tile = map[r][c];
+
+        if (tile === "#") {
+          // Rounded navy candy wall
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--sparko-navy").trim();
+          ctx.beginPath();
+          ctx.roundRect(
+            x + 3, y + 3,
+            TILE_SIZE - 6, TILE_SIZE - 6,
+            8
+          );
+          ctx.fill();
+        } else {
+          // Floor
+          ctx.fillStyle = "#020214";
+          ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+
+          if (tile === "." || tile === "o") {
+            // Lollipop pellet
+            ctx.save();
+            const radius = tile === "o" ? 6 : 3;
+            ctx.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+            ctx.beginPath();
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--sparko-pink").trim();
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.fill();
+            // tiny stick
+            if (tile === "o") {
+              ctx.strokeStyle = "#ffffffaa";
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(0, radius);
+              ctx.lineTo(0, radius + 5);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+        }
+      }
+    }
+
+    // Draw ghosts
+    for (const g of ghosts) {
+      const x = g.col * TILE_SIZE + TILE_SIZE / 2;
+      const y = g.row * TILE_SIZE + TILE_SIZE / 2;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = g.color;
+      ctx.beginPath();
+      ctx.arc(0, -4, 9, Math.PI, 0);
+      ctx.lineTo(9, 8);
+      ctx.lineTo(4, 10);
+      ctx.lineTo(0, 8);
+      ctx.lineTo(-4, 10);
+      ctx.lineTo(-9, 8);
+      ctx.closePath();
+      ctx.fill();
+
+      // eyes
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(-3, -5, 2, 0, Math.PI * 2);
+      ctx.arc(3, -5, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#111";
+      ctx.beginPath();
+      ctx.arc(-3 + g.dirCol, -5 + g.dirRow, 1, 0, Math.PI * 2);
+      ctx.arc(3 + g.dirCol, -5 + g.dirRow, 1, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // Draw player lollipop
+    const px = player.col * TILE_SIZE + TILE_SIZE / 2;
+    const py = player.row * TILE_SIZE + TILE_SIZE / 2;
+
+    ctx.save();
+    ctx.translate(px, py);
+
+    // stick
+    ctx.strokeStyle = "#ffffffaa";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, 6);
+    ctx.lineTo(0, 14);
+    ctx.stroke();
+
+    // candy head
+    const gradient = ctx.createRadialGradient(-4, -4, 1, 0, 0, 12);
+    gradient.addColorStop(0, "#ffe4f3");
+    gradient.addColorStop(1, player.color);
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // tiny sparkle
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(-4, -4, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    if (gameOver || win) {
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#fff";
+      ctx.font = "20px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const msg = win ? "Sweet victory." : "Game over.";
+      ctx.fillText(msg, canvas.width / 2, canvas.height / 2 - 10);
+      ctx.font = "14px system-ui";
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--sparko-pink").trim();
+      ctx.fillText("Press Space to restart", canvas.width / 2, canvas.height / 2 + 18);
+    }
+  }
+
+  let lastTime = 0;
+  const STEP_INTERVAL = 120; // ms per step
+
+  function loop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const delta = timestamp - lastTime;
+
+    if (delta >= STEP_INTERVAL && !gameOver && !win) {
+      movePlayer();
+      moveGhosts();
+      checkCollisions();
+      lastTime = timestamp;
+    }
+
     draw();
     requestAnimationFrame(loop);
-}
+  }
 
-// Initialize and Start
-createLollipops();
-loop();
+  resetGame();
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>
